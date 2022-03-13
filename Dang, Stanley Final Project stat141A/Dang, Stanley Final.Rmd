@@ -1,0 +1,364 @@
+---
+title: "GDP per Captia effects on Survivability of Covid"
+output: html_document
+---
+
+```{r echo = FALSE}
+library(tidyverse)
+library(dplyr)
+library(plotly)
+covid <- read_csv("https://covid19.who.int/WHO-COVID-19-global-data.csv")
+gdp = read_csv("https://databank.worldbank.org/data/download/GDP.csv")
+population = read_csv("population.csv")
+```
+
+```{r echo = FALSE}
+#data cleaning
+covid$Date_reported = as.Date(covid$Date_reported, format = "%Y-%m-%d")
+gdp = gdp[,-3]; gdp = gdp[,-5]; gdp = gdp[-1,];gdp = gdp[-1,];gdp = gdp[-1,];gdp = gdp[-1,]
+colnames(gdp) = c('abv','rank','country','totalgdp')
+gdp = gdp %>% filter(!is.na(rank))
+gdp = gdp[-207,] ;gdp = gdp[-207,]; gdp = gdp[-207,] 
+totalfix = gsub(",", "", gdp$totalgdp)
+totalfix = as.numeric(totalfix)
+gdp$totalgdp = totalfix
+
+population$CountryCode = as.character(population$CountryCode)
+gdp$abv = as.character(gdp$abv)
+
+
+
+i = 1; j = 1; templist = as.data.frame(c());
+for(i in 1:25)
+ { 
+   for (j in 1:206)
+    {
+      if (gdp$abv[j] == population$CountryCode[i])
+      {
+        templist = rbind(templist,gdp[j,])
+      }
+     }
+}
+
+population = cbind(population,templist)
+population = population[,-4];population = population[,-4];population = population[,-4]
+population =population %>% mutate(gdpcapita = totalgdp/population)
+
+```
+
+# Introduction
+
+It is understood that the "richer" the country the higher chance of you surviving anything. Whether it is covid or the simple flu, wealthy countries has the capabilities of providing better supplies and support for the ones that reside within. However, a wealthy country doesn't necessarily mean the people of the country are wealthy. There are many cases of localized wealth which boosts up GDP calculations while hiding the poverty within the country. Thus if you were in one of the top 25 most populated countries will you have a higher chance of surviving covid if the country's GDP is high? 
+
+
+# Background
+
+In this report we will be analyzing the top 25 most populated countries. We will use their GDP to calculate the GDP per capita of each country. With the GDP per capita we can use cluster analysis to catergorize these countries into separate clusters. The data sets we will be using is the covid 19 global data from WHO, gdp from Databank Worldbank, and population from Databank Worldbank. The data set from WHO is updated daily. The data sets from Databank Worldbank is of the fiscal year 2020. The WHO data set has the start data of 2020 to the end date of today, while the Data Worldbank is only 2020. The accuracy of Data Worldbank will have a slight error since the dataset is not up to date. When plotted we will have the pair plot as shown below. 
+
+
+```{r echo = FALSE}
+pairs(population[3:5])
+```
+
+# Procedures
+
+In the plots including population, there are 3 outliers. United states, China, and India. China and India are the ones with the highest population and out scale the rest of the countries greatly. In the plots including gdp, united states and china are the outliers. However united states greatly out scales china even as an outlier. In the plots including gdpcapita, the only great outlier is united states.
+We see that United states is the outlier in all cases when we consider gdp thus in our cluster analysis we will take out united states and have united states as its only cluster before hand.
+
+## Cluster Plots
+
+```{r echo = FALSE, error = FALSE}
+unitedstates = population %>% filter(CountryCode == 'USA')
+population = population[-3,]
+data = population[,c(3,4,5)]
+means = apply(data,2,mean)
+sds = apply(data,2,sd)
+nor = scale(data,center=means,scale=sds)
+
+distance = dist(nor)
+
+mydata.hclust = hclust(distance)
+
+
+plot(mydata.hclust,hang=-1, labels=population$Country,main='Hierarchical Agglomerative Clustering')
+kmeanpop = kmeans(data,3)
+population %>% mutate(cluster = kmeanpop$cluster) %>%
+  ggplot(aes(x= population, y = gdpcapita, color = as.factor(cluster))) + 
+  geom_point()
+```
+
+
+Thus there will be four clusters. The first cluster is United States, we will use this as the baseline since they are "on top" of the rest of the countries. The second cluster is China and India, this cluster is of two of the most populated countries. the third cluster is Japan,Germany,Italy, France, and United Kingdom, these countries are the first-world countries. The fourth group includes the rest of countries, some notable countries included are Russia, Brazil, and Mexico.
+
+We will now establish a baseline analysis on cluster one.
+
+
+## Cluster 1 (United States)
+
+```{r echo = FALSE, error = FALSE}
+
+uscovid = covid %>% filter(Country_code == "US")
+usmean = mean(uscovid$New_deaths)
+y = uscovid$New_deaths
+x = uscovid$Date_reported
+anovamodel = aov(y ~ x)
+
+splinedataus = smooth.spline(y = uscovid$New_deaths ,x =uscovid$Date_reported, df = 10)
+tempdata = as.data.frame(splinedataus$x)
+tempdata = cbind(tempdata,splinedataus$y)
+colnames(tempdata) = c('x','y')
+uscovid = cbind(uscovid,tempdata)
+
+
+probability_death_us = usmean/ (unitedstates$population)
+
+fig = uscovid %>% plot_ly( x = ~Date_reported)
+fig = fig %>% add_trace(y = ~New_deaths, name = 'New Deaths', mode = 'lines',type = 'scatter' )
+fig = fig %>% add_trace(y = ~y, name = 'Spline', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = usmean, name = 'Mean', mode = 'lines', type = 'scatter' )
+fig
+```
+
+
+Plotting the new deaths along a time line we can see that there are 3 spikes within the data. From prior knowledge we know these spikes are because of certain variants. United States case count peaked at around 5,000 deaths on one day. The average deaths throughout this time line was 1,198 deaths per day. The Anova model (redline) we chose to model this data shows a positive trend in the New deaths. We fitted a spline model to represent the time trend in the data. Analyzing the spline model we see that during the first spikes there wasn't a control on covid which we can assume from the smooth spikes in the spline model. On the most recent spike we see that there was a slight flattening on the curve which could imply united states is control the spike better this time around. The probability of death per day from covid in United States is 3.63697e-06.
+
+
+### ANOVA model United States
+
+```{r echo = FALSE}
+plot(anovamodel, col ="blue")
+```
+
+
+The anova test on United States gave us an average base line for how the richest country handled covid deaths. We test the sensitivity of this model by plotting the anova. The Residual vs fitted model has a correlation thus this model isn't sensitive to anova.The QQ plot shows that the data is normally distributed. We see there is a high leverage section within the data at 0.001-0.002.
+
+
+## Cluster 2
+
+We will now analyze cluster 2, China and India. From outside research, we believe these countries have similarities because they are the most populated countries and are also the largest growing economies. Both countries are industrializing very quickly which means they share many of similarities such as wealth gaps and localized poverty/wealth. We will analyze this cluster as a whole by averaging the deaths of each day in both countries combined.
+
+
+```{r echo = FALSE, error = FALSE}
+india = covid %>% filter(Country_code == "IN")
+china = covid %>% filter(Country_code == "CN")
+temp = as.data.frame((india$New_deaths + china$New_deaths)/2)
+cluster2 = cbind(india$Date_reported, temp )
+colnames(cluster2) = c('date','deaths')
+
+cluster2mean = mean(cluster2$deaths)
+y = cluster2$deaths
+x = cluster2$date
+anovamodel_cluster2 = aov(y ~ x)
+
+splinedata2 = smooth.spline(y = y ,x =x, df = 10)
+tempdata = as.data.frame(splinedata2$x)
+tempdata = cbind(tempdata,splinedata2$y)
+colnames(tempdata) = c('x','y')
+cluster2 = cbind(cluster2,tempdata)
+
+indiapop = population %>% filter(CountryCode == 'IND')
+chinapop = population %>% filter(CountryCode == 'CHN')
+probability_death_cluster2 = cluster2mean / ((indiapop$population + chinapop$population)/2)
+  
+fig = cluster2 %>% plot_ly( x = ~date)
+fig = fig %>% add_trace(y = ~deaths, name = 'New Deaths', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y, name = 'Spline', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = cluster2mean, name = 'Mean', mode = 'lines' ,type = 'scatter')
+fig
+```
+
+
+In cluster 2, we see major difference than the united states. Cluster 2 seems to have few days where the
+deaths spiked and during the surge spikes they increase drastically. During the first surge from July 2020 to January 2021, there seem to be a fair amount of control because the curve was flat. During the second surge from January 2021 to July 2021, cluster 2 has an increase from 0-100 deaths per day to a peak of 3,000+ deaths per day. The second surge seems to not have any control because the surge increased greatly and happened faster than the previous surge. The mean of deaths is 328. We can see that a common occurrence in this cluster is few days where the deaths spikes. The probability of death each day in this cluster is 2.351405e-07.
+
+
+### ANOVA model Cluster 2
+
+
+```{r echo = FALSE}
+plot(anovamodel_cluster2, col ="blue")
+```
+
+
+The anova test on cluster gave us an average base line for how the most populated country handled covid deaths. We test the sensitivity of this model by plotting the anova. The Residual vs fitted model was able to fit most of the data expect for the spikes. This data set has sensitivities to the spikes. The QQ plot shows that the data has a right-skewed distributed. We see there is a high leverage section within the data at 0.001-0.002.
+
+
+
+## Cluster 3
+
+In cluster 3 we have the countries Japan,Germany,Italy, France, and United Kingdom. These countries are among the "first world" countries considering their gdp and gdp per capita. These first world countries are the most wealthy and compareable to the United States. We will analyze this cluster with the same technique as cluster 2.
+
+
+```{r echo = FALSE}
+Japan = covid %>% filter(Country_code == "JP")
+Germany = covid %>% filter(Country_code == "DE")
+Italy = covid %>% filter(Country_code == "IT")
+France = covid %>% filter(Country_code == "FR")
+United_kingdom = covid %>% filter(Country_code == "GB")
+temp = as.data.frame((Japan$New_deaths + Germany$New_deaths + Italy$New_deaths + France$New_deaths + United_kingdom$New_deaths)/5)
+cluster3 = cbind(Japan$Date_reported, temp )
+colnames(cluster3) = c('date','deaths')
+
+
+cluster3mean = mean(cluster3$deaths)
+y = cluster3$deaths
+x = cluster3$date
+anovamodel_cluster3 = aov(y ~ x)
+
+
+japanpop = population %>% filter(CountryCode == "JPN")
+germanypop = population %>% filter(CountryCode == "DEU")
+italypop = population %>% filter(CountryCode == "ITA")
+francepop = population %>% filter(CountryCode == "FRA")
+unitedkingdompop = population %>% filter(CountryCode == "GBR")
+probability_death_cluster3 = cluster3mean/((japanpop$population + germanypop$population + italypop$population +francepop$population + unitedkingdompop$population)/5)
+  
+
+splinedata3 = smooth.spline(y = y ,x =x, df = 10)
+tempdata = as.data.frame(splinedata3$x)
+tempdata = cbind(tempdata,splinedata3$y)
+colnames(tempdata) = c('x','y')
+cluster3 = cbind(cluster3,tempdata)
+
+
+
+fig = cluster3 %>% plot_ly( x = ~date)
+fig = fig %>% add_trace(y = ~deaths, name = 'New Deaths', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y, name = 'Spline', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = cluster3mean, name = 'Mean', mode = 'lines',type = 'scatter' )
+fig
+
+```
+
+
+Cluster 3 shares a very similar model as The United States. All of the surges in cluster 3 can be mapped to The United States. The difference between them is the middle surge for cluster 3 is flatter than The United States. The mean for cluster 3 is 152 deaths. A noticeable event in the cluster the middle surge, these countries seem to be able to control the death amount because of how the surge had sections of days where the deaths were stagnant. The probability of death from covid in this cluster is 1.883489e-06.
+
+
+
+### ANOVA model Cluster 3
+
+
+```{r echo = FALSE}
+plot(anovamodel_cluster3, col ="blue")
+```
+
+
+The anova test on cluster 3 gave us an average base line for how the richest countries handled covid deaths. We test the sensitivity of this model by plotting the anova. The Residual vs fitted model has a correlation thus this model isn't sensitive to anova.The QQ plot shows that the data is normally distributed with slight skewed right. We see there is a high leverage section within the data at 0.001-0.002.
+
+
+## Cluster 4
+
+
+In cluster 4 we have the rest of the top 25 most populated countries. They are Indonesia, Pakistan,Brazil,Nigeria,	Bangladesh,Russian Federation,Mexico,Ethiopia,Philippines,Egypt, Arab Rep.,Vietnam,Congo, Dem. Rep.,Turkey,	Iran, Islamic Rep.,Thailand,Tanzania,	South Africa. These countries are the second world countries based on gdp. They still hold power in the world aspect but they are still developing countries that haven't had widespread industrialization. The notable country that is include in this cluster is Russia Federation. Although they are considered a world power, a majority of their population is still living in the poverty range.
+
+
+```{r echo = FALSE}
+indonesia = covid %>% filter(Country_code == "ID")
+pakistan = covid %>% filter(Country_code == "PK")
+brazil = covid %>% filter(Country_code == "BR")
+brazil = brazil[-1,]
+nigeria = covid %>% filter(Country_code == "NG")
+bangladesh = covid %>% filter(Country_code == "BD")
+russia = covid %>% filter(Country_code == "RU")
+mexico = covid %>% filter(Country_code == "MX")
+mexico = mexico[-1,]
+ethiopia = covid %>% filter(Country_code == "ET")
+philippines = covid %>% filter(Country_code == "PH")
+egypt = covid %>% filter(Country_code == "EG")
+vietnam = covid %>% filter(Country_code == "VN")
+congo = covid %>% filter(Country_code == "CG")
+turkey = covid %>% filter(Country_code == "TR")
+iran = covid %>% filter(Country_code == "IR")
+thailand = covid %>% filter(Country_code == "TH")
+tanzania = covid %>% filter(Country_code == "TZ")
+southafrica = covid %>% filter(Country_code == "ZA")
+
+temp = as.data.frame(( indonesia$New_deaths + pakistan$New_deaths +brazil$New_deaths + nigeria$New_deaths+bangladesh$New_deaths+russia$New_deaths +mexico$New_deaths+ethiopia$New_deaths+philippines$New_deaths+egypt$New_deaths+vietnam$New_deaths+congo$New_deaths+turkey$New_deaths+iran$New_deaths+thailand$New_deaths+tanzania$New_deaths+southafrica$New_deaths)/17)
+cluster4 = cbind(indonesia$Date_reported, temp )
+colnames(cluster4) = c('date','deaths')
+
+cluster4mean = mean(cluster4$deaths)
+y = cluster4$deaths
+x = cluster4$date
+anovamodel_cluster4 = aov(y ~ x)
+
+indonesiapop = population %>% filter(CountryCode == "IDN")
+pakistanpop = population %>% filter(CountryCode == "PAK")
+brazilpop= population %>% filter(CountryCode == "BRA")
+nigeriapop = population %>% filter(CountryCode == "NGA")
+bangladeshpop = population %>% filter(CountryCode == "BGD")
+russiapop = population %>% filter(CountryCode == "RUS")
+mexicopop= population %>% filter(CountryCode == "MEX")
+ethiopiapop = population %>% filter(CountryCode == "ETH")
+philippinespop = population %>% filter(CountryCode == "PHL")
+egyptpop = population %>% filter(CountryCode == "EGY")
+vietnampop = population %>% filter(CountryCode == "VNM")
+congopop = population %>% filter(CountryCode == "COD")
+turkeypop = population %>% filter(CountryCode == "TUR")
+iranpop = population %>% filter(CountryCode == "IRN")
+thailandpop = population %>% filter(CountryCode == "THA")
+tanzaniapop = population %>% filter(CountryCode == "TZA")
+southafricapop = population %>% filter(CountryCode == "ZAF")
+
+probability_death_cluster4 = cluster4mean/ ((indonesiapop$population + pakistanpop$population + brazilpop$population + nigeriapop$population + bangladeshpop$population + russiapop$population + mexicopop$population + ethiopiapop$population + philippinespop$population+egyptpop$population + vietnampop$population+congopop$population + turkeypop$population + iranpop$population + thailandpop$population + tanzaniapop$population + southafricapop$population)/17)
+
+
+
+splinedata4 = smooth.spline(y = y ,x =x, df = 10)
+tempdata = as.data.frame(splinedata4$x)
+tempdata = cbind(tempdata,splinedata4$y)
+colnames(tempdata) = c('x','y')
+cluster4 = cbind(cluster4,tempdata)
+
+fig = cluster4 %>% plot_ly( x = ~date)
+fig = fig %>% add_trace(y = ~deaths, name = 'New Deaths', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y, name = 'Spline', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = cluster4mean, name = 'Mean', mode = 'lines',type = 'scatter' )
+fig
+
+```
+
+
+Since there is many more countries in this cluster the amount of deaths can be skewed. We see that these countries with large population however low gdp per captia has a very different plot than the other first world countries. The deaths in these countries seem to be a constant and very close to the mean. The deaths were increasing from the beginning until August 2021. There were flat sections on the way up to the peak. Cluster 4 seem to be very different than the other clusters because there were no noticable surges, instead the death count just kept increase through the whole time frame. The probability of death from covid each day in cluster 4 is 1.088927e-06.
+
+
+### ANOVA model Cluster 4
+
+
+```{r echo = FALSE}
+plot(anovamodel_cluster4, col ="blue")
+```
+
+
+The residual vs fitted shows a parabola motion within the data which shows that this data is not sensitive. We can see the qq plot is normally distributed. There is high leverage from 0.001 to 0.003. The leverage in this case is higher than the other cases.
+
+
+# Summary
+
+We analyzed 4 clusters within the top 25 most populated countries. Cluster 1 is only United States because when GDP is considered, United States becomes an outlier. Cluster 2 is China and India, these countries are the most populated countries in the world by a large margin. Cluster 3 is Japan, Germany, Italy, France,and United Kingdom, these countries are the largest first world countries excluding United States. Cluster 4 consist of the rest of the countries, these countries are generally second world countries or/and countries with large wealth gaps. We used cluster 1 as the base line for survivability and we concluded that every day you are in in this cluster you have a 3.63697e-06, cluster 2  2.351405e-07, cluster 3 1.883489e-06, and cluster 4 1.088927e-06. From our analyzes we see that cluster 2 has the best chances of survivability since the probability of dying form covid each day is the smallest. The second best cluster is cluster 4, third cluster is cluster 3, and last is cluster 1. This result was not expected from our original expectations. If we consider the data from WHO as fact then our results is the best countries to be in to survive covid are the poorer countries or highly populate countries. However, if we don't take the WHO data as fact then there is major issues within the collection of data from WHO. These issues could be resulted from countries that are poorer or highly populate do not have the resources to properly process their data. 
+
+```{r echo = FALSE}
+finalplot = as.data.frame(splinedataus$x);
+finalplot = cbind(finalplot,splinedataus$y)
+finalplot = finalplot[-1,]
+finalplot = cbind(finalplot,splinedata2$x,splinedata2$y)
+finalplot = cbind(finalplot,splinedata3$x,splinedata3$y)
+finalplot = cbind(finalplot,splinedata4$x,splinedata4$y)
+finalplot = cbind(finalplot,indonesia$Date_reported )
+colnames(finalplot) = c("x1","Deaths","x2","y2","x3","y3","x4","y4", "date")
+
+fig = finalplot %>% plot_ly(x =~date)
+fig = fig %>% add_trace(y = ~Deaths, name = 'United States', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y2, name = 'Cluster 2', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y3, name = 'Cluster 3', mode = 'lines' ,type = 'scatter')
+fig = fig %>% add_trace(y = ~y4, name = 'Cluster 4', mode = 'lines' ,type = 'scatter')
+
+fig
+
+```
+
+# Conclusion
+
+If you were in one of the top 25 most populated countries will you have a higher chance of surviving covid if the country's GDP is high? Our research shows that no, the higher the GDP of a country the higher your chances are to die from covid. We concluded analyzing the spline model of each cluster of countries. The countries that are more wealthy seem to have days with more deaths and more affected by major surges. This conclusion is based on the validity of the covid death count from WHO data. We considered the reason for why this may be and we concluded that there may be major issue with reporting from countries that are poorer and/or highly populated. The death counts from these countries are unusually low during certain times. An example of bad data is of China's deaths. Their total deaths was 8,639 while India is 515,714 and United States is 958,659. There are many instances of bad data throughout the WHO dataset that my have skewed the data. After analysis on the clusters, based on the data we used, the best countries to be in to survive is in Cluster 2.
+
+
